@@ -1,22 +1,42 @@
-<!-- INTERFACE GENERATED VIA GEMINI -->
-<!-- Matrix operations generated via author hands, Rust, cargo and wasm-bindgen <3 -->
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Интерфейс для WASM проекта</title>
+    <title>Интерфейс для SimpleSolver WASM</title>
     <style>
         body { font-family: sans-serif; margin: 2em; background-color: #f4f4f9; color: #333; }
-        h1, h2 { color: #444; }
+        h1 { color: #444; text-align: center; }
         .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .control-group { margin-bottom: 1.5em; padding: 1em; border: 1px solid #ddd; border-radius: 4px; }
         label { display: block; margin-bottom: .5em; font-weight: bold; }
-        input[type="number"], input[type="text"] { width: calc(100% - 22px); padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
-        button { padding: 10px 15px; border: none; background-color: #007bff; color: white; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        textarea, input[type="text"] { 
+            width: calc(100% - 22px); 
+            padding: 10px; 
+            margin-bottom: 10px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            font-family: monospace;
+            font-size: 1.1em;
+        }
+        textarea { height: 120px; resize: vertical; }
+        .button-group { display: flex; gap: 10px; }
+        button { 
+            padding: 10px 15px; 
+            border: none; 
+            background-color: #007bff; 
+            color: white; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 1em;
+            flex-grow: 1;
+        }
         button:hover { background-color: #0056b3; }
+        button#undoButton { background-color: #6c757d; }
+        button#undoButton:hover { background-color: #5a6268; }
         pre { background-color: #eee; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+        #matrixOutput { font-size: 1.2em; text-align: center; }
+        #errorOutput { color: #d9534f; font-weight: bold; min-height: 1.2em; }
     </style>
 </head>
 <body>
@@ -24,156 +44,287 @@
         <h1>Интерфейс для SimpleSolver WASM</h1>
 
         <div class="control-group">
-            <h2>1. Создание матрицы</h2>
-            <label for="width">Ширина:</label>
-            <input type="number" id="width" value="3">
-            <label for="height">Высота:</label>
-            <input type="number" id="height" value="3">
-            <label for="data">Данные (через запятую, необязательно):</label>
-            <input type="text" id="data" placeholder="1,2,3,4,5,6,7,8,9">
-            <button id="createMatrix">Создать матрицу</button>
+            <label for="matrixInput">Введите матрицу (в формате JSON массива):</label>
+            <textarea id="matrixInput" placeholder="[[1, 2, 3], [4, 5, 6]]"></textarea>
+            <div class="button-group">
+                <button id="submitButton">Ввести</button>
+                <button id="undoButton">Назад</button>
+            </div>
         </div>
 
         <div class="control-group">
-            <h2>2. Взаимодействие с матрицей</h2>
-            <label for="x">X (индекс столбца):</label>
-            <input type="number" id="x" value="0">
-            <label for="y">Y (индекс строки):</label>
-            <input type="number" id="y" value="0">
-            <label for="value">Значение:</label>
-            <input type="number" id="value" value="99">
-            <button id="getValue">Получить значение (at)</button>
-            <button id="setValue">Установить значение (set)</button>
-        </div>
-
-        <div class="control-group">
-            <h2>3. Оптимизация</h2>
-            <label for="pivots">Опорные столбцы (через запятую):</label>
-            <input type="text" id="pivots" placeholder="0,1">
-            <button id="optimizeMatrix">Оптимизировать</button>
+            <label for="pivotsInput">Опорные столбцы (через запятую):</label>
+            <input type="text" id="pivotsInput">
+            <button id="optimizeButton">Оптимизировать</button>
         </div>
         
         <div class="control-group">
-            <h2>Информация и Результат</h2>
-            <pre id="output">Здесь будут отображаться результаты...</pre>
+            <h2>Матрица</h2>
+            <pre id="matrixOutput">Загрузка...</pre>
+            <pre id="errorOutput"></pre>
         </div>
     </div>
 
     <script type="module">
-        // Импортируем сгенерированную обёртку
         import init, { Matrix } from './SimpleSolver.js';
 
-        async function run() {
-            // Инициализируем WASM модуль
-            await init('./SimpleSolver_bg.wasm');
+        /**
+         * Основной объект приложения, инкапсулирующий всю логику.
+         */
+        const app = {
+            // --- СОСТОЯНИЕ ПРИЛОЖЕНИЯ ---
+            state: {
+                matrixInstance: null,
+                history: [],
+            },
 
-            let matrixInstance;
-            const output = document.getElementById('output');
+            // --- КОНФИГУРАЦИЯ ---
+            config: {
+                HISTORY_SIZE: 10,
+                HISTORY_KEY: 'ss_matrixHistory',
+                LAST_MATRIX_KEY: 'ss_lastMatrixState',
+            },
 
-            // --- НОВАЯ ФУНКЦИЯ ДЛЯ ОТОБРАЖЕНИЯ МАТРИЦЫ ---
-            function displayMatrix(matrix) {
-                if (!matrix) return;
-                try {
-                    const width = matrix.width;
-                    const height = matrix.height;
-                    let matrixString = `Матрица (${width}x${height}):\n`;
-                    
-                    for (let y = 0; y < height; y++) {
-                        let row = [];
-                        for (let x = 0; x < width; x++) {
-                            // Добавляем значение в строку. Используем at()
-                            row.push(matrix.at(x, y));
-                        }
-                        // Соединяем значения в строке через табуляцию для лучшего выравнивания
-                        matrixString += row.join('\t') + '\n';
+            // --- ССЫЛКИ НА UI ЭЛЕМЕНТЫ ---
+            ui: {
+                matrixInput: null,
+                pivotsInput: null,
+                submitButton: null,
+                undoButton: null,
+                optimizeButton: null,
+                matrixOutput: null,
+                errorOutput: null,
+            },
+
+            /**
+             * Инициализация приложения.
+             * Запускает WASM, кэширует UI, привязывает события и загружает состояние.
+             */
+            async init() {
+                await init('./SimpleSolver_bg.wasm');
+                this.cacheUI();
+                this.bindEvents();
+                this.storage.load();
+            },
+
+            /**
+             * Кэширует все необходимые DOM-элементы для быстрого доступа.
+             */
+            cacheUI() {
+                this.ui.matrixInput = document.getElementById('matrixInput');
+                this.ui.pivotsInput = document.getElementById('pivotsInput');
+                this.ui.submitButton = document.getElementById('submitButton');
+                this.ui.undoButton = document.getElementById('undoButton');
+                this.ui.optimizeButton = document.getElementById('optimizeButton');
+                this.ui.matrixOutput = document.getElementById('matrixOutput');
+                this.ui.errorOutput = document.getElementById('errorOutput');
+            },
+
+            /**
+             * Привязывает обработчики ко всем интерактивным элементам.
+             */
+            bindEvents() {
+                this.ui.submitButton.addEventListener('click', () => this.handleSubmit());
+                this.ui.undoButton.addEventListener('click', () => this.handleUndo());
+                this.ui.optimizeButton.addEventListener('click', () => this.handleOptimize());
+            },
+
+            // --- ОБРАБОТЧИКИ ДЕЙСТВИЙ ПОЛЬЗОВАТЕЛЯ ---
+
+            /**
+             * Обрабатывает ввод новой матрицы из textarea.
+             */
+            handleSubmit() {
+                this.render.clearError();
+                const text = this.ui.matrixInput.value.trim();
+                if (!text) {
+                    return this.render.error("Поле ввода матрицы пусто.");
+                }
+                
+                const oldState = this.helpers.matrixToString(this.state.matrixInstance);
+                const success = this.helpers.updateMatrixFromString(text);
+
+                if (success) {
+                    if (oldState && text !== oldState) {
+                        this.history.push(oldState);
                     }
-                    output.textContent = matrixString;
-                } catch (e) {
-                    output.textContent = `Ошибка при отображении матрицы: ${e}`;
+                    this.storage.save();
                 }
-            }
+            },
 
-            // Создание матрицы
-            document.getElementById('createMatrix').addEventListener('click', () => {
+            /**
+             * Обрабатывает шаг назад по истории.
+             */
+            handleUndo() {
+                this.render.clearError();
+                const prevState = this.history.pop();
+                if (!prevState) {
+                    return this.render.error("История пуста, отменять нечего.");
+                }
+                
+                this.helpers.updateMatrixFromString(prevState);
+                this.ui.matrixInput.value = prevState;
+                this.storage.save();
+            },
+
+            /**
+             * Обрабатывает оптимизацию текущей матрицы.
+             */
+            handleOptimize() {
+                this.render.clearError();
+                if (!this.state.matrixInstance) {
+                    return this.render.error("Сначала введите и создайте матрицу.");
+                }
+
+                const pivotsStr = this.ui.pivotsInput.value.trim();
+                if (!pivotsStr) {
+                    return this.render.error("Введите опорные столбцы.");
+                }
+                
+                const oldState = this.helpers.matrixToString(this.state.matrixInstance);
+                
                 try {
-                    const width = parseInt(document.getElementById('width').value);
-                    const height = parseInt(document.getElementById('height').value);
-                    const dataStr = document.getElementById('data').value;
+                    const pivots = new Uint32Array(pivotsStr.replace(/[\[\]\s]/g, '').split(',').map(Number));
+                    this.state.matrixInstance.optimize(pivots);
                     
-                    let data = null;
-                    if (dataStr) {
-                        // Используем BigInt64Array для i64
-                        data = new BigInt64Array(dataStr.split(',').map(BigInt));
-                    }
-
-                    matrixInstance = new Matrix(width, height, data);
-                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ
-                    displayMatrix(matrixInstance); 
+                    this.history.push(oldState);
+                    this.render.all();
+                    this.storage.save();
                 } catch (e) {
-                    output.textContent = `Ошибка: ${e}`;
+                    this.render.error(`Ошибка оптимизации: ${e}`);
                 }
-            });
+            },
 
-            // Получение значения
-            document.getElementById('getValue').addEventListener('click', () => {
-                if (!matrixInstance) {
-                    output.textContent = 'Сначала создайте матрицу.';
-                    return;
-                }
-                try {
-                    const x = parseInt(document.getElementById('x').value);
-                    const y = parseInt(document.getElementById('y').value);
-                    const value = matrixInstance.at(x, y);
-                    // Сначала выводим матрицу, потом запрошенное значение
-                    displayMatrix(matrixInstance);
-                    output.textContent += `\n---\nЗапрошенное значение в (${x}, ${y}): ${value}`;
-                } catch (e) {
-                    output.textContent = `Ошибка: ${e}`;
-                }
-            });
-
-            // Установка значения
-            document.getElementById('setValue').addEventListener('click', () => {
-                if (!matrixInstance) {
-                    output.textContent = 'Сначала создайте матрицу.';
-                    return;
-                }
-                try {
-                    const x = parseInt(document.getElementById('x').value);
-                    const y = parseInt(document.getElementById('y').value);
-                    const value = BigInt(document.getElementById('value').value);
-                    matrixInstance.set(x, y, value);
-                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ ПОСЛЕ ИЗМЕНЕНИЯ
-                    displayMatrix(matrixInstance);
-                } catch (e) {
-                    output.textContent = `Ошибка: ${e}`;
-                }
-            });
-            
-            // Оптимизация
-            document.getElementById('optimizeMatrix').addEventListener('click', () => {
-                if (!matrixInstance) {
-                    output.textContent = 'Сначала создайте матрицу.';
-                    return;
-                }
-                try {
-                    const pivotsStr = document.getElementById('pivots').value;
-                    if (!pivotsStr) {
-                        output.textContent = 'Введите опорные столбцы.';
+            // --- ЛОГИКА ОБНОВЛЕНИЯ UI ---
+            render: {
+                /**
+                 * Полностью обновляет UI на основе текущего состояния.
+                 */
+                all() {
+                    app.ui.matrixInput.value = app.helpers.matrixToString(app.state.matrixInstance);
+                    this.matrix(app.state.matrixInstance);
+                    this.clearError();
+                },
+                /**
+                 * Отображает матрицу в pre-элементе.
+                 */
+                matrix(matrix) {
+                    if (!matrix) {
+                        app.ui.matrixOutput.textContent = 'Матрица не создана.';
                         return;
                     }
-                    const pivots = new Uint32Array(pivotsStr.split(',').map(Number));
-                    matrixInstance.optimize(pivots);
-                    output.textContent = 'Оптимизация выполнена успешно.\n';
-                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ ПОСЛЕ ОПТИМИЗАЦИИ
-                    displayMatrix(matrixInstance);
-                } catch (e) {
-                    output.textContent = `Ошибка оптимизации: ${e}`;
-                }
-            });
-        }
+                    try {
+                        let text = '';
+                        for (let y = 0; y < matrix.height; y++) {
+                            let row = [];
+                            for (let x = 0; x < matrix.width; x++) {
+                                row.push(matrix.at(x, y));
+                            }
+                            text += row.join('\t') + '\n';
+                        }
+                        app.ui.matrixOutput.textContent = text;
+                    } catch (e) {
+                        this.error(`Ошибка отображения: ${e}`);
+                    }
+                },
+                error(message) { app.ui.errorOutput.textContent = message; },
+                clearError() { app.ui.errorOutput.textContent = ''; },
+            },
 
-        run();
+            // --- УПРАВЛЕНИЕ ИСТОРИЕЙ ---
+            history: {
+                push(matrixString) {
+                    if (!matrixString) return;
+                    app.state.history.push(matrixString);
+                    if (app.state.history.length > app.config.HISTORY_SIZE) {
+                        app.state.history.shift();
+                    }
+                },
+                pop() {
+                    return app.state.history.pop();
+                }
+            },
+
+            // --- УПРАВЛЕНИЕ ХРАНИЛИЩЕМ (LocalStorage) ---
+            storage: {
+                save() {
+                    try {
+                        const matrixStr = app.helpers.matrixToString(app.state.matrixInstance);
+                        localStorage.setItem(app.config.LAST_MATRIX_KEY, matrixStr);
+                        localStorage.setItem(app.config.HISTORY_KEY, JSON.stringify(app.state.history));
+                    } catch (e) {
+                        console.error("Не удалось сохранить состояние:", e);
+                    }
+                },
+                load() {
+                    try {
+                        const savedHistory = localStorage.getItem(app.config.HISTORY_KEY);
+                        if (savedHistory) app.state.history = JSON.parse(savedHistory);
+
+                        const savedMatrix = localStorage.getItem(app.config.LAST_MATRIX_KEY);
+                        if (savedMatrix) {
+                            app.helpers.updateMatrixFromString(savedMatrix);
+                            app.ui.matrixInput.value = savedMatrix;
+                        } else {
+                            app.render.matrix(null);
+                        }
+                    } catch (e) {
+                        console.error("Не удалось загрузить состояние:", e);
+                        app.render.error("Не удалось загрузить предыдущую сессию.");
+                    }
+                },
+            },
+
+            // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+            helpers: {
+                /**
+                 * Создает WASM-матрицу из строки, обновляет состояние и UI.
+                 */
+                updateMatrixFromString(text) {
+                    try {
+                        const parsed = JSON.parse(text);
+                        if (!Array.isArray(parsed) || parsed.length === 0 || !Array.isArray(parsed[0])) {
+                            throw new Error("Неверный формат. Ожидается непустой двумерный массив.");
+                        }
+                        const height = parsed.length;
+                        const width = parsed[0].length;
+                        if (width === 0) throw new Error("Матрица не может иметь нулевую ширину.");
+
+                        for (const row of parsed) {
+                            if (!Array.isArray(row) || row.length !== width) {
+                                throw new Error("Все строки в матрице должны быть одинаковой длины.");
+                            }
+                        }
+                        
+                        app.state.matrixInstance = new Matrix(width, height, new BigInt64Array(parsed.flat().map(BigInt)));
+                        app.render.all();
+                        return true;
+                    } catch (e) {
+                        app.render.error(`Ошибка обработки матрицы: ${e.message}`);
+                        return false;
+                    }
+                },
+
+                /**
+                 * Преобразует WASM-матрицу обратно в строку формата [[...]].
+                 */
+                matrixToString(matrix) {
+                    if (!matrix) return '';
+                    const rows = [];
+                    for (let y = 0; y < matrix.height; y++) {
+                        const row = [];
+                        for (let x = 0; x < matrix.width; x++) {
+                            row.push(matrix.at(x, y).toString());
+                        }
+                        rows.push(`[${row.join(',')}]`);
+                    }
+                    return `[${rows.join(',')}]`;
+                }
+            }
+        };
+
+        // Запускаем приложение
+        app.init();
     </script>
 </body>
 </html>
