@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерфейс для WASM проекта</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background-color: #f4f4f9; color: #333; }
+        h1, h2 { color: #444; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .control-group { margin-bottom: 1.5em; padding: 1em; border: 1px solid #ddd; border-radius: 4px; }
+        label { display: block; margin-bottom: .5em; font-weight: bold; }
+        input[type="number"], input[type="text"] { width: calc(100% - 22px); padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 15px; border: none; background-color: #007bff; color: white; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        button:hover { background-color: #0056b3; }
+        pre { background-color: #eee; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Интерфейс для SimpleSolver WASM</h1>
+
+        <div class="control-group">
+            <h2>1. Создание матрицы</h2>
+            <label for="width">Ширина:</label>
+            <input type="number" id="width" value="3">
+            <label for="height">Высота:</label>
+            <input type="number" id="height" value="3">
+            <label for="data">Данные (через запятую, необязательно):</label>
+            <input type="text" id="data" placeholder="1,2,3,4,5,6,7,8,9">
+            <button id="createMatrix">Создать матрицу</button>
+        </div>
+
+        <div class="control-group">
+            <h2>2. Взаимодействие с матрицей</h2>
+            <label for="x">X (индекс столбца):</label>
+            <input type="number" id="x" value="0">
+            <label for="y">Y (индекс строки):</label>
+            <input type="number" id="y" value="0">
+            <label for="value">Значение:</label>
+            <input type="number" id="value" value="99">
+            <button id="getValue">Получить значение (at)</button>
+            <button id="setValue">Установить значение (set)</button>
+        </div>
+
+        <div class="control-group">
+            <h2>3. Оптимизация</h2>
+            <label for="pivots">Опорные столбцы (через запятую):</label>
+            <input type="text" id="pivots" placeholder="0,1">
+            <button id="optimizeMatrix">Оптимизировать</button>
+        </div>
+        
+        <div class="control-group">
+            <h2>Информация и Результат</h2>
+            <pre id="output">Здесь будут отображаться результаты...</pre>
+        </div>
+    </div>
+
+    <script type="module">
+        // Импортируем сгенерированную обёртку
+        import init, { Matrix } from './SimpleSolver.js';
+
+        async function run() {
+            // Инициализируем WASM модуль
+            await init('./SimpleSolver_bg.wasm');
+
+            let matrixInstance;
+            const output = document.getElementById('output');
+
+            // --- НОВАЯ ФУНКЦИЯ ДЛЯ ОТОБРАЖЕНИЯ МАТРИЦЫ ---
+            function displayMatrix(matrix) {
+                if (!matrix) return;
+                try {
+                    const width = matrix.width;
+                    const height = matrix.height;
+                    let matrixString = `Матрица (${width}x${height}):\n`;
+                    
+                    for (let y = 0; y < height; y++) {
+                        let row = [];
+                        for (let x = 0; x < width; x++) {
+                            // Добавляем значение в строку. Используем at()
+                            row.push(matrix.at(x, y));
+                        }
+                        // Соединяем значения в строке через табуляцию для лучшего выравнивания
+                        matrixString += row.join('\t') + '\n';
+                    }
+                    output.textContent = matrixString;
+                } catch (e) {
+                    output.textContent = `Ошибка при отображении матрицы: ${e}`;
+                }
+            }
+
+            // Создание матрицы
+            document.getElementById('createMatrix').addEventListener('click', () => {
+                try {
+                    const width = parseInt(document.getElementById('width').value);
+                    const height = parseInt(document.getElementById('height').value);
+                    const dataStr = document.getElementById('data').value;
+                    
+                    let data = null;
+                    if (dataStr) {
+                        // Используем BigInt64Array для i64
+                        data = new BigInt64Array(dataStr.split(',').map(BigInt));
+                    }
+
+                    matrixInstance = new Matrix(width, height, data);
+                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ
+                    displayMatrix(matrixInstance); 
+                } catch (e) {
+                    output.textContent = `Ошибка: ${e}`;
+                }
+            });
+
+            // Получение значения
+            document.getElementById('getValue').addEventListener('click', () => {
+                if (!matrixInstance) {
+                    output.textContent = 'Сначала создайте матрицу.';
+                    return;
+                }
+                try {
+                    const x = parseInt(document.getElementById('x').value);
+                    const y = parseInt(document.getElementById('y').value);
+                    const value = matrixInstance.at(x, y);
+                    // Сначала выводим матрицу, потом запрошенное значение
+                    displayMatrix(matrixInstance);
+                    output.textContent += `\n---\nЗапрошенное значение в (${x}, ${y}): ${value}`;
+                } catch (e) {
+                    output.textContent = `Ошибка: ${e}`;
+                }
+            });
+
+            // Установка значения
+            document.getElementById('setValue').addEventListener('click', () => {
+                if (!matrixInstance) {
+                    output.textContent = 'Сначала создайте матрицу.';
+                    return;
+                }
+                try {
+                    const x = parseInt(document.getElementById('x').value);
+                    const y = parseInt(document.getElementById('y').value);
+                    const value = BigInt(document.getElementById('value').value);
+                    matrixInstance.set(x, y, value);
+                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ ПОСЛЕ ИЗМЕНЕНИЯ
+                    displayMatrix(matrixInstance);
+                } catch (e) {
+                    output.textContent = `Ошибка: ${e}`;
+                }
+            });
+            
+            // Оптимизация
+            document.getElementById('optimizeMatrix').addEventListener('click', () => {
+                if (!matrixInstance) {
+                    output.textContent = 'Сначала создайте матрицу.';
+                    return;
+                }
+                try {
+                    const pivotsStr = document.getElementById('pivots').value;
+                    if (!pivotsStr) {
+                        output.textContent = 'Введите опорные столбцы.';
+                        return;
+                    }
+                    const pivots = new Uint32Array(pivotsStr.split(',').map(Number));
+                    matrixInstance.optimize(pivots);
+                    output.textContent = 'Оптимизация выполнена успешно.\n';
+                    // ВЫЗОВ ФУНКЦИИ ОТОБРАЖЕНИЯ ПОСЛЕ ОПТИМИЗАЦИИ
+                    displayMatrix(matrixInstance);
+                } catch (e) {
+                    output.textContent = `Ошибка оптимизации: ${e}`;
+                }
+            });
+        }
+
+        run();
+    </script>
+</body>
+</html>
